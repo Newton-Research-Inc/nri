@@ -116,7 +116,7 @@ planModule() {
     return 1
   }
   name="$(basename "$d_abs")"
-  tfBanner "tf plan — ${name}"
+  tfBanner "tf plan — ${dir}"
 
   if prev_json="$(tfFreshPlanJson "$d_abs")"; then
     logInfo "skipping ${name}: latest plan is fresher than ${SKIP_FRESH_HOURS}h"
