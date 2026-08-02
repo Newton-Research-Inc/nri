@@ -97,7 +97,7 @@ case "$format" in
       }'
     ;;
   diff)
-    jq -rf "$TISS_LIB/tf-diff.jq" ${files[@]+"${files[@]}"}
+    jq -rf "${_DEVOPS_TF_LIB}/tf-diff.jq" ${files[@]+"${files[@]}"}
     ;;
   excel)
     out="tf-report.$(ts).xlsx"
