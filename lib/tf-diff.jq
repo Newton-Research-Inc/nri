@@ -212,10 +212,15 @@
     # Same buckets as plan-report.sh: "removed" = a forget (dropped from state
     # WITHOUT destroying); imports ride alongside a no-op/update via
     # .change.importing; moves are address changes only.
-    ( input_filename | split("/")[-1]
-      | sub("\\.[0-9]{8}T[0-9]{6}\\.tfplan\\.json$"; "")
-      | sub("\\.tfplan\\.json$"; "")
-      | sub("\\.json$"; "") ) as $title    # module name from the artifact stem
+    # ( input_filename | split("/")[-1]
+    #   | sub("\\.[0-9]{8}T[0-9]{6}\\.tfplan\\.json$"; "")
+    #   | sub("\\.tfplan\\.json$"; "")
+    #   | sub("\\.json$"; "") ) as $title    # module name from the artifact stem
+    # Display path to root module
+    (input_filename | split("/")[0:-3]|join("/")
+        # remove any path up to terraform
+        |gsub("^.+/(?<tfpath>[\\w\\-]*terraform)";"\(.tfpath)")
+    ) as $title          # the root dir
     | ( [ .resource_changes[]?
           | select(.previous_address != null
                    or .change.importing != null
