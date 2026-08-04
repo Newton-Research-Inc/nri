@@ -1,0 +1,648 @@
+#!/usr/bin/env bash
+#
+# tiss — The Intuitive Scripting System
+#
+# A directory-routed universal script CLI:
+#   nri git clone <repo>   -> runs git/clone.sh from the first overlay tree
+#                              that has it (or the core), otherwise passes
+#                              through to plain `git` (installing it first
+#                              if it is missing).
+#
+# Overlay trees (TISS_PATH, managed by `nri pile`) layer private or
+# company script trees over the core: most-specific first, first match wins,
+# core always last. Help, completions and --manifest merge all trees.
+#
+# Invoke under any name you like: symlink or alias this file and every help
+# message follows the name you chose (argv[0]-aware):
+#   ln -s /path/to/nri/bin/nri /usr/local/bin/x
+#
+set -euo pipefail
+
+# --- self-location -----------------------------------------------------------
+# Resolve symlinks portably (macOS ships BSD readlink, which historically has
+# no -f), so a symlink like /usr/local/bin/x still finds the real tree.
+self="${BASH_SOURCE[0]}"
+while [ -L "$self" ]; do
+  dir="$(cd -P "$(dirname "$self")" && pwd)"
+  self="$(readlink "$self")"
+  case "$self" in /*) ;; *) self="$dir/$self" ;; esac
+done
+TISS_BIN_DIR="$(cd -P "$(dirname "$self")" && pwd)"
+
+TISS_HOME="${TISS_HOME:-$(dirname "$TISS_BIN_DIR")}"
+TISS_NAME="$(basename "$0")" # help output follows the alias/symlink name
+TISS_SCRIPTS="$TISS_HOME/scripts"
+TISS_LIB="$TISS_HOME/lib"
+TISS_CONFIG="${TISS_CONFIG:-$HOME/.config/nri}"
+export TISS_HOME TISS_NAME TISS_SCRIPTS TISS_LIB TISS_CONFIG
+
+# Helpers (log*, meta, ensureTool, cfg, tissTrees, ...) shared with all
+# scripts. Also loads user config + overlay configs/libs — so config may
+# set TISS_DATA/TISS_STATE/TISS_PATH; the defaults below apply after.
+. "$TISS_LIB/init.sh"
+TISS_DATA="${TISS_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/nri/data}"
+TISS_STATE="${TISS_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/nri}"
+export TISS_DATA TISS_STATE
+export TISS_PATH="${TISS_PATH:-}" # resolved by config; scripts inherit it
+
+# Shortcut shims (`nri shortcuts`): names in $TISS_SHIMS symlink
+# back to this dispatcher and route via argv[0] in main. The shim dir is
+# stripped from PATH here so child scripts and passthrough tools only
+# ever see real commands — recursion through a shim is structurally
+# impossible. TISS_SHIMS_ON_PATH records what we saw, for doctor/sync.
+TISS_SHIMS="$(tissShims)"
+TISS_SHIMS_ON_PATH=0
+stripped=""
+oldIFS="$IFS"
+IFS=':'
+for dir in $PATH; do
+  if [ "${dir%/}" = "${TISS_SHIMS%/}" ]; then
+    TISS_SHIMS_ON_PATH=1
+    continue
+  fi
+  stripped="$stripped${stripped:+:}$dir"
+done
+IFS="$oldIFS"
+PATH="$stripped"
+unset stripped dir oldIFS
+export PATH TISS_SHIMS TISS_SHIMS_ON_PATH
+
+# --- discovery ---------------------------------------------------------------
+listScripts() { # listScripts <scripts-root> -> executable files, sorted
+  find "$1" -type f | sort | while IFS= read -r f; do
+    [ -x "$f" ] && printf '%s\n' "$f"
+  done
+}
+
+cmdOf() { # cmdOf <scripts-root> <file> -> command words ("git clone")
+  local rel="${2#"$1"/}"
+  rel="${rel%.*}"
+  printf '%s\n' "${rel//\// }"
+}
+
+findScript() { # findScript <node> <token> -> matching executable, or fail
+  local f
+  for f in "$1/$2" "$1/$2".*; do
+    if [ -f "$f" ] && [ -x "$f" ]; then
+      printf '%s\n' "$f"
+      return 0
+    fi
+  done
+  return 1
+}
+
+treeTag() { # treeTag <tree-root> -> short label for help/manifest
+  if [ "$1" = "$TISS_HOME" ]; then
+    echo "core"
+  else
+    basename "$1"
+  fi
+}
+
+# resolveInTree <scripts-root> <args...>
+# Walks one tree; on a script match sets RESOLVED_SCRIPT/RESOLVED_SHIFT.
+# A `_self.*` file in a namespace is that namespace's HANDLER: it catches
+# any unmatched subcommand (deepest one wins; exact scripts still beat it),
+# so `scripts/ssm/_self.sh` makes `nri ssm <anything>` yours while
+# `scripts/ssm/get.sh` keeps owning `nri ssm get`.
+RESOLVED_SCRIPT=""
+RESOLVED_SHIFT=0
+resolveInTree() {
+  local node="$1" consumed=0 script handler="" handler_consumed=0
+  shift
+  while :; do
+    if script="$(findScript "$node" _self)"; then
+      handler="$script"
+      handler_consumed=$consumed
+    fi
+    [ $# -gt 0 ] || break
+    case "$1" in -*) break ;; esac # flags never route
+    if [ "$consumed" -eq 0 ] && [ "$1" = "self" ]; then
+      break # self/ is the lexicon's private backing store, not a namespace (killed at 1.0)
+    elif script="$(findScript "$node" "$1")"; then
+      RESOLVED_SCRIPT="$script"
+      RESOLVED_SHIFT=$((consumed + 1))
+      return 0
+    elif [ -d "$node/$1" ]; then
+      node="$node/$1"
+      consumed=$((consumed + 1))
+      shift
+    else
+      break
+    fi
+  done
+  # Unmatched tokens (or flags) remain: the deepest _self takes them all.
+  # Bare namespace landings ($# = 0) still get help, not the handler.
+  if [ -n "$handler" ] && [ $# -gt 0 ]; then
+    RESOLVED_SCRIPT="$handler"
+    RESOLVED_SHIFT=$handler_consumed
+    return 0
+  fi
+  return 1
+}
+
+# --- help --------------------------------------------------------------------
+showHelp() { # showHelp [namespace words...] — merged across all trees
+  local ns="$*"
+  echo "usage: $TISS_NAME ${ns:+$ns }<command> [args...]"
+  echo
+  if [ -z "$ns" ]; then
+    # The lexicon leads: reserved words are the nri contract, resolved
+    # only from the core — a tree can never shadow them.
+    echo "tiss lexicon (reserved — always tiss; \`$TISS_NAME -- <cmd>\` runs the real tool):"
+    local w lf desc
+    for w in $TISS_LEXICON; do
+      case "$w" in
+        help) desc="this help, or any command's: $TISS_NAME help tf plan" ;;
+        version) desc="print the nri version" ;;
+        *)
+          desc=""
+          lf="$(findScript "$TISS_SCRIPTS/self" "$w")" && desc="$(meta "$lf" description)"
+          ;;
+      esac
+      printf '  %-22s %s\n' "$w" "$desc"
+    done
+    echo
+    echo "== Commands ===================================================="
+  else
+    echo "commands:"
+  fi
+  local tree root node f rel tag seen="
+"
+  while IFS= read -r tree; do
+    root="$tree/scripts"
+    node="$root${ns:+/${ns// /\/}}"
+    [ -d "$node" ] || continue
+    tag="$(treeTag "$tree")"
+    while IFS= read -r f; do
+      rel="${f#"$node"/}"
+      rel="${rel%.*}"
+      rel="${rel//\// }"
+      case "$rel" in _self | *" _self") continue ;; esac # handlers get the footer
+      # the lexicon owns the self/ dir at the root: shown above, not here
+      [ -z "$ns" ] && case "$rel" in self | "self "*) continue ;; esac
+      case "$seen" in *"
+$rel
+"*) continue ;; esac # shadowed by a more specific tree
+      seen="$seen$rel
+"
+      if [ "$tag" = "core" ]; then
+        printf '  %-22s %s\n' "$rel" "$(meta "$f" description)"
+      else
+        printf '  %-22s %s [%s]\n' "$rel" "$(meta "$f" description)" "$tag"
+      fi
+    done < <(listScripts "$node")
+  done < <(tissTrees)
+  echo
+  if [ -n "$ns" ]; then
+    # A _self handler owns everything unmatched in this namespace.
+    local handler=""
+    while IFS= read -r tree; do
+      if handler="$(findScript "$tree/scripts${ns:+/${ns// /\/}}" _self)"; then
+        break
+      fi
+      handler=""
+    done < <(tissTrees)
+    if [ -n "$handler" ]; then
+      echo "Anything else: $(meta "$handler" description)"
+    else
+      echo "Anything else passes through to \`${ns%% *}\` itself."
+    fi
+  else
+    echo "Anything else passes through to the underlying tool, installing it"
+    echo "first if needed:  $TISS_NAME rg TODO   # installs ripgrep, runs it"
+    echo
+    echo "  $TISS_NAME --manifest   machine-readable command list (jsonl)"
+  fi
+}
+
+# --- manifest ----------------------------------------------------------------
+# One JSON object per command (jsonl), for AI agents and tooling. Merged
+# across trees; each entry carries its source tree, shadowed entries drop.
+manifest() {
+  ensureTool jq || exit 127
+  local tree root f cmd type seen="
+"
+  while IFS= read -r tree; do
+    root="$tree/scripts"
+    [ -d "$root" ] || continue
+    while IFS= read -r f; do
+      cmd="$(cmdOf "$root" "$f")"
+      type="scripted"
+      case "$cmd" in
+        self | "self "*)
+          # Lexicon commands surface under their reserved names; a tree's
+          # self/ files are dead to routing and don't belong in the manifest.
+          [ "$tree" = "$TISS_HOME" ] || continue
+          cmd="${cmd#self}"
+          cmd="${cmd# }"
+          [ -n "$cmd" ] || continue
+          type="reserved"
+          ;;
+      esac
+      case "$cmd" in
+        _self)
+          cmd="*"
+          type="handler"
+          ;;
+        *" _self")
+          cmd="${cmd% _self} *"
+          type="handler"
+          ;;
+      esac
+      case "$seen" in *"
+$cmd
+"*) continue ;; esac
+      seen="$seen$cmd
+"
+      jq -cn \
+        --arg command "$cmd" \
+        --arg type "$type" \
+        --arg description "$(meta "$f" description)" \
+        --arg usage "$(meta "$f" usage)" \
+        --arg needs "$(meta "$f" needs)" \
+        --arg examples "$(metaAll "$f" example)" \
+        --arg source "${f#"$tree"/}" \
+        --arg tree "$(treeTag "$tree")" \
+        '{command: $command,
+          type: $type,
+          description: $description,
+          usage: $usage,
+          needs: ($needs | split(" ") | map(select(. != ""))),
+          examples: ($examples | split("\n") | map(select(. != ""))),
+          source: $source,
+          tree: $tree}'
+    done < <(listScripts "$root")
+  done < <(tissTrees)
+}
+
+# --- shell completion ---------------------------------------------------------
+# Called by the completion functions emitted by `nri completion`:
+#   nri --complete <completed words...>       plain candidates (bash)
+#   nri --complete-zsh <completed words...>   name:description pairs (zsh)
+# Union of every tree's candidates at the walked node.
+shellComplete() {
+  local mode="$1" tree node w entry name seen="
+" skip
+  shift
+  # Root-level completion offers the lexicon too (self stays hidden).
+  if [ -z "$*" ]; then
+    for name in $TISS_LEXICON; do
+      seen="$seen$name
+"
+      if [ "$mode" = "zsh" ]; then
+        printf '%s:%s\n' "$name" "(nri)"
+      else
+        printf '%s\n' "$name"
+      fi
+    done
+  fi
+  while IFS= read -r tree; do
+    node="$tree/scripts"
+    skip=0
+    for w in "$@"; do
+      [ -n "$w" ] || continue
+      if [ "$node" = "$tree/scripts" ] && [ "$w" = "self" ]; then
+        # self/ is the lexicon's private backing store, not a namespace
+        # (killed at 1.0) — never descend into it, even if asked by name.
+        skip=1
+        break
+      elif [ -d "$node/$w" ]; then
+        node="$node/$w"
+      elif findScript "$node" "$w" >/dev/null 2>&1; then
+        return 0 # inside a script's own args — nothing to add
+      else
+        skip=1
+        break
+      fi
+    done
+    [ "$skip" = 1 ] && continue
+    for entry in "$node"/*; do
+      [ -e "$entry" ] || continue
+      name="$(basename "$entry")"
+      case "$name" in _*) continue ;; esac # handlers/private files
+      # self/ belongs to the lexicon; never offer it as a namespace
+      [ -z "$*" ] && [ "$name" = "self" ] && [ -d "$entry" ] && continue
+      if [ -d "$entry" ]; then
+        :
+      elif [ -f "$entry" ] && [ -x "$entry" ]; then
+        name="${name%.*}"
+      else
+        continue
+      fi
+      case "$seen" in *"
+$name
+"*) continue ;; esac
+      seen="$seen$name
+"
+      if [ "$mode" = "zsh" ]; then
+        if [ -d "$entry" ]; then
+          printf '%s:%s\n' "$name" "($name commands)"
+        else
+          printf '%s:%s\n' "$name" "$(meta "$entry" description)"
+        fi
+      else
+        printf '%s\n' "$name"
+      fi
+    done
+  done < <(tissTrees)
+}
+
+# --- near-miss detection -------------------------------------------------------
+# A file that WOULD have routed but isn't executable is the #1 "why doesn't
+# my new command work" trap. Never fail silently: find it and say so.
+findNearMiss() { # findNearMiss <args...> -> path of non-executable candidate
+  local tree node w f
+  while IFS= read -r tree; do
+    node="$tree/scripts"
+    for w in "$@"; do
+      case "$w" in -*) break ;; esac
+      for f in "$node/$w" "$node/$w".*; do
+        if [ -f "$f" ] && [ ! -x "$f" ]; then
+          printf '%s\n' "$f"
+          return 0
+        fi
+      done
+      [ -d "$node/$w" ] || break
+      node="$node/$w"
+    done
+  done < <(tissTrees)
+  return 1
+}
+
+# --- passthrough -------------------------------------------------------------
+passthrough() { # passthrough <tool> [args...] — behave as if called natively
+  local near
+  if near="$(findNearMiss "$@")"; then
+    if command -v "$(tissCommandAlias "$1")" >/dev/null 2>&1; then
+      logWarn "'$near' would match this command but is not executable (chmod +x to activate it) — passing through"
+    else
+      logError "'$near' matches this command but is not executable."
+      logError "activate it with:  chmod +x $near"
+      exit 126
+    fi
+  fi
+  # tool@version runs through mise without touching your global tools:
+  # `nri python@3.13 script.py` -> mise x python@3.13 -- python script.py
+  case "$1" in
+    *@?*)
+      local spec="$1" base
+      base="${spec%%@*}"
+      shift
+      if ! tissInstallAllowed "$base"; then
+        logError "'$base' is not on the passthrough install allowlist (cfg TISS_INSTALL_ALLOW \"$base\")"
+        exit 127
+      fi
+      ensureTool mise || exit 127
+      exec mise x "$spec" -- "$base" "$@"
+      ;;
+  esac
+
+  # Aliases may be multi-word: `tiss ssm ...` -> `aws ssm ...`
+  local alias_cmd
+  alias_cmd="$(nriCommandAlias "$1")"
+  shift
+  # shellcheck disable=SC2086  # word-splitting the alias is the point
+  set -- $alias_cmd "$@"
+  local tool="$1"
+  shift
+  # A word that is no tool AND not install-allowlisted is probably a typo
+  # of something nri knows — offer the correction before refusing.
+  if ! command -v "$tool" >/dev/null 2>&1 && ! tissInstallAllowed "$tool"; then
+    suggestOrFall "$tool" "$@"
+  fi
+  ensureTool --gated "$tool" || exit 127
+  exec "$tool" "$@"
+}
+
+suggestOrFall() { # suggestOrFall <word> [args...] — exec the correction, or return
+  cfg TISS_SUGGEST 1
+  [ "$TISS_SUGGEST" = 1 ] || return 0
+  local word="$1" matches n reply="" pick
+  shift
+  matches="$(tissSuggest "$word")" || return 0
+  n="$(printf '%s\n' "$matches" | wc -l | tr -d ' ')"
+  if [ "$n" -eq 1 ] && { : </dev/tty >/dev/tty; } 2>/dev/null; then
+    printf "%s: '%s' is not a nri command or an installed tool. Did you mean \`%s %s\`? [Y/n] " \
+      "$TISS_NAME" "$word" "$TISS_NAME" "$matches" >/dev/tty
+    IFS= read -r reply </dev/tty || reply=""
+    case "$reply" in
+      n* | N*) return 0 ;; # they meant it — fall through to the install gate
+    esac
+    exec "$TISS_HOME/bin/nri" "$matches" "$@"
+  elif [ "$n" -gt 1 ] && command -v fzf >/dev/null 2>&1 && { : </dev/tty >/dev/tty; } 2>/dev/null; then
+    # Several equally-close candidates and fzf is already installed (never
+    # force-installed just for a typo hint) — let them pick instead of
+    # dumping a plain list. Esc/Ctrl-C (or no selection) falls through to
+    # the plain list below, same as declining the single-match prompt.
+    pick="$(printf '%s\n' "$matches" | fzf --prompt="$TISS_NAME: did you mean> " --height=~40%)" || pick=""
+    [ -n "$pick" ] && exec "$TISS_HOME/bin/nri" "$pick" "$@"
+  fi
+  # Non-interactive (or several candidates with no fzf, or fzf aborted):
+  # hint, but never guess — a script that typo'd should fail loudly, not
+  # be silently corrected.
+  logError "'$word' is not a nri command or an installed tool. Did you mean:"
+  printf '%s\n' "$matches" | while IFS= read -r reply; do
+    logError "  $TISS_NAME $reply"
+  done
+  exit 127
+}
+
+# --- main --------------------------------------------------------------------
+main() {
+  # Invoked under a shortcut name (a shim symlink living in $TISS_SHIMS):
+  # prepend its expansion and route normally. Only shims multiplex — a
+  # symlink anywhere else stays a plain alias, so shortcut definitions
+  # can never hijack an alias name. A leading @env keeps its place so
+  # profiles still load first (`tfplan @dev -target x` works).
+  local expansion
+  if [ "$(dirname "$0")" -ef "$TISS_SHIMS" ] \
+    && expansion="$(tissShortcutLookup "$TISS_NAME")"; then
+    case "${1:-}" in
+      @?*)
+        local envWord="$1"
+        shift
+        # shellcheck disable=SC2086 # word-splitting the expansion is the point
+        set -- "$envWord" $expansion "$@"
+        ;;
+      *)
+        # shellcheck disable=SC2086
+        set -- $expansion "$@"
+        ;;
+    esac
+  fi
+
+  # Leading prefixes, consumed in order, freely combined:
+  #   @<name>   load that environment profile (bare `nri @dev` = dev shell)
+  #   +<tree>   install the tree package if missing, enable it, route on
+  #   -<tree>   disable the tree (clone kept), route on
+  # A -<word> that doesn't name an installed/registered tree is NOT a
+  # tree op — it falls through to normal flag handling (-h stays help).
+  local envName treeDir
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      @?*)
+        envName="${1#@}"
+        shift
+        tissLoadEnv "$envName" || exit 2
+        [ $# -gt 0 ] || set -- shell
+        break
+        ;;
+      +?*)
+        treeDir="$(tissTreeInstall "${1#+}")" || exit 2
+        tissPileAdd "$treeDir"
+        shift
+        ;;
+      -?*)
+        if treeDir="$(tissTreeByName "${1#-}")"; then
+          tissPileRemove "$treeDir"
+          shift
+        else
+          break
+        fi
+        ;;
+      *) break ;;
+    esac
+  done
+
+  # `--` escapes the lexicon: everything after it runs as the real tool,
+  # untouched by tiss routing (`nri -- env` runs /usr/bin/env).
+  if [ "${1:-}" = "--" ]; then
+    shift
+    if [ $# -eq 0 ]; then
+      showHelp
+      exit 0
+    fi
+    passthrough "$@"
+  fi
+
+  case "${1:-}" in
+    "" | -h | --help)
+      showHelp
+      exit 0
+      ;;
+    help)
+      # `nri help` / `nri help git clone` — help is a first-class word.
+      shift
+      if [ $# -eq 0 ]; then
+        showHelp
+        exit 0
+      fi
+      local tree nspath
+      while IFS= read -r tree; do
+        if resolveInTree "$tree/scripts" "$@"; then
+          tissHelp "$RESOLVED_SCRIPT"
+          exit 0
+        fi
+      done < <(tissTrees)
+      nspath="$(printf '/%s' "$@")"
+      while IFS= read -r tree; do
+        if [ -d "$tree/scripts$nspath" ]; then
+          showHelp "$@"
+          exit 0
+        fi
+      done < <(tissTrees)
+      logError "no nri command '$*' — for a passthrough tool's own help try: $TISS_NAME $1 --help"
+      exit 2
+      ;;
+    --manifest)
+      manifest
+      exit 0
+      ;;
+    --version | -V | version)
+      echo "$TISS_NAME $(cat "$TISS_HOME/version.txt" 2>/dev/null || echo dev) ($TISS_HOME)"
+      exit 0
+      ;;
+    --complete)
+      shift
+      shellComplete plain "$@"
+      exit 0
+      ;;
+    --complete-zsh)
+      shift
+      shellComplete zsh "$@"
+      exit 0
+      ;;
+  esac
+
+  # The reserved lexicon resolves ONLY from the core, BEFORE the pile
+  # walk — no tree can shadow the nri contract. (`help` and `version`
+  # were already handled above.)
+  local word rscript rdep
+  if tissReserved "${1:-}"; then
+    word="$1"
+    shift
+    rscript="$(findScript "$TISS_SCRIPTS/self" "$word")" || {
+      logError "reserved word '$word' has no core implementation — reinstall nri?"
+      exit 70
+    }
+    case "${1:-}" in
+      -h | --help) ;;
+      *)
+        for rdep in $(meta "$rscript" needs); do
+          ensureTool "$rdep" || exit 127
+        done
+        ;;
+    esac
+    exec "$rscript" "$@"
+  fi
+
+  # First tree with a script match wins (overlay beats core).
+  # NOTE: the tree list is read on fd 3, NOT stdin — a `while read` loop
+  # redirected on fd 0 would replace stdin for the exec'd script and break
+  # every pipe into a nri command (found the hard way).
+  local tree dep script
+  while IFS= read -r tree <&3; do
+    if resolveInTree "$tree/scripts" "$@"; then
+      script="$RESOLVED_SCRIPT"
+      shift "$RESOLVED_SHIFT"
+      # Preflight: install whatever the script declares via `# @needs`
+      # before it runs. (Asking for help never installs anything.)
+      case "${1:-}" in
+        -h | --help) ;;
+        *)
+          for dep in $(meta "$script" needs); do
+            ensureTool "$dep" || exit 127
+          done
+          ;;
+      esac
+      exec 3<&-
+      exec "$script" "$@"
+    fi
+  done 3< <(tissTrees)
+
+  # Landed on a namespace (`nri git`), or asked one for help
+  # (`nri git --help`, `nri git help`): merged namespace help.
+  # Any OTHER flag (`nri git --version`) still passes through natively.
+  local ns=() w trailing=""
+  for w in "$@"; do
+    case "$w" in
+      -h | --help | help)
+        trailing="help"
+        break
+        ;;
+      -*)
+        trailing="flag"
+        break
+        ;;
+      *) ns+=("$w") ;;
+    esac
+  done
+  # self/ is the lexicon's private backing store, not a namespace (killed at
+  # 1.0) — `nri self` no longer lands on namespace help.
+  if [ ${#ns[@]} -gt 0 ] && [ "$trailing" != "flag" ] && [ "${ns[0]}" != "self" ]; then
+    local nspath
+    nspath="$(printf '/%s' "${ns[@]}")"
+    while IFS= read -r tree; do
+      if [ -d "$tree/scripts$nspath" ]; then
+        showHelp "${ns[@]}"
+        exit 0
+      fi
+    done < <(tissTrees)
+  fi
+
+  # No script matched: behave as if the wrapped tool was called natively.
+  passthrough "$@"
+}
+
+main "$@"

@@ -34,7 +34,7 @@ else
 fi
 
 mkdir -p "$bin_dir"
-ln -sf "$dest/bin/tiss" "$bin_dir/$name"
+ln -sf "$dest/bin/nri" "$bin_dir/$name"
 say "linked: $bin_dir/$name"
 
 case ":$PATH:" in
