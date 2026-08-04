@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# tiss installer — safe to curl | bash, safe to re-run (updates in place):
+# nri installer — safe to curl | bash, safe to re-run (updates in place):
 #
-#   curl -fsSL https://raw.githubusercontent.com/mattyo161/tiss/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Newton-Research-Inc/nri/nri/install.sh | bash
 #
-# Installs to $XDG_DATA_HOME/tiss/repo (default ~/.local/share/tiss/repo)
+# Installs to $XDG_DATA_HOME/nri/repo (default ~/.local/share/nri/repo)
 # and symlinks the dispatcher into ~/.local/bin. Pass a name to install
 # under a different command name:
 #
@@ -12,12 +12,12 @@
 #
 set -euo pipefail
 
-name="${1:-tiss}"
-repo_url="https://github.com/mattyo161/tiss.git"
-dest="${XDG_DATA_HOME:-$HOME/.local/share}/tiss/repo"
+name="${1:-nri}"
+repo_url="https://github.com/Newton-Research-Inc/nri.git"
+dest="${XDG_DATA_HOME:-$HOME/.local/share}/nri/repo"
 bin_dir="$HOME/.local/bin"
 
-say() { printf '\033[36m[tiss install]\033[0m %s\n' "$*" >&2; }
+say() { printf '\033[36m[nri install]\033[0m %s\n' "$*" >&2; }
 
 command -v git >/dev/null 2>&1 || {
   say "git is required — install it first."
@@ -47,7 +47,7 @@ case ":$PATH:" in
 esac
 
 # Seed the fully commented config template (uncomment lines to override).
-cfg_dir="${TISS_CONFIG:-$HOME/.config/tiss}"
+cfg_dir="${TISS_CONFIG:-$HOME/.config/nri}"
 if [ ! -f "$cfg_dir/config.sh" ]; then
   mkdir -p "$cfg_dir"
   cp "$dest/etc/config.sh.example" "$cfg_dir/config.sh"
