@@ -47,11 +47,29 @@ case ":$PATH:" in
 esac
 
 # Seed the fully commented config template (uncomment lines to override).
+# The template itself must stay pure documentation (tests/test_config.sh
+# asserts sourcing it changes nothing) — an nri-specific active default
+# is appended separately, below, after the copy.
 cfg_dir="${TISS_CONFIG:-$HOME/.config/nri}"
 if [ ! -f "$cfg_dir/config.sh" ]; then
   mkdir -p "$cfg_dir"
   cp "$dest/etc/config.sh.example" "$cfg_dir/config.sh"
   say "created $cfg_dir/config.sh (all defaults, documented — uncomment to override)"
+fi
+
+# nri default: pile packages (tiss +name) come from the org's dedicated
+# distribution repo, not wherever this install happened to be cloned
+# from. Idempotent (grep guard, anchored so it doesn't match the
+# template's own commented-out doc line for the same var) so re-running
+# install.sh never duplicates or clobbers a value you've since changed
+# by hand.
+if ! grep -qE '^[[:space:]]*cfg[[:space:]]+TISS_TREES_REPO' "$cfg_dir/config.sh" 2>/dev/null; then
+  {
+    echo ""
+    echo "## -- nri defaults -------------------------------------------------------------"
+    echo 'cfg TISS_TREES_REPO "git@github.com:Newton-Research-Inc/.tiss.git"'
+  } >>"$cfg_dir/config.sh"
+  say "set TISS_TREES_REPO default in $cfg_dir/config.sh"
 fi
 
 # Seed the suggested shortcuts set the same way (uncomment to activate).
