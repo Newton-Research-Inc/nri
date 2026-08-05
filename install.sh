@@ -37,35 +37,12 @@ mkdir -p "$bin_dir"
 ln -sf "$dest/bin/nri" "$bin_dir/$name"
 say "linked: $bin_dir/$name"
 
-rc="$HOME/.bashrc"
-case "${SHELL:-}" in */zsh) rc="$HOME/.zshrc" ;; esac
-
 case ":$PATH:" in
   *":$bin_dir:"*) ;;
   *)
-    if grep -qF '.local/bin' "$rc" 2>/dev/null; then
-      say "NOTE: $bin_dir is in $rc but not active in this shell — restart it or: source $rc"
-    elif [ -r /dev/tty ]; then
-      printf '\033[36m[nri install]\033[0m add %s to PATH in %s? [Y/n] ' "$bin_dir" "$rc" >&2
-      reply=""
-      read -r reply </dev/tty || reply="n"
-      case "$reply" in
-        [nN]*)
-          say "skipped — add this to your shell rc yourself:"
-          # shellcheck disable=SC2016  # shown literally on purpose
-          say '  export PATH="$HOME/.local/bin:$PATH"'
-          ;;
-        *)
-          # shellcheck disable=SC2016  # $HOME kept literal so it survives synced dotfiles
-          printf '\n# added by nri installer\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"$rc"
-          say "added to $rc — restart your shell or: source $rc"
-          ;;
-      esac
-    else
-      say "NOTE: $bin_dir is not on your PATH — add this to your shell rc:"
-      # shellcheck disable=SC2016  # shown literally on purpose
-      say '  export PATH="$HOME/.local/bin:$PATH"'
-    fi
+    say "NOTE: $bin_dir is not on your PATH — add this to your shell rc:"
+    # shellcheck disable=SC2016  # shown literally on purpose
+    say '  export PATH="$HOME/.local/bin:$PATH"'
     ;;
 esac
 
