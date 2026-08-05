@@ -116,3 +116,8 @@ if [ "$warn" -eq 0 ]; then
 else
   logWarn "$ok ok, $warn to fix — hints above."
 fi
+
+# Unconditional: it no-ops silently once the rc line is already there, and
+# fixes the root cause behind both the "rc activation" and "shim dir not on
+# PATH" warnings above in one shot.
+tissOfferRcActivation
