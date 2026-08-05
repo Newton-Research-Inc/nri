@@ -217,6 +217,7 @@ tissCustomInstall() { # tissCustomInstall <tool> -> install command for tools
   case "$1" in
     ajl) ensureTool uv && echo "uv tool install git+https://github.com/mattyo161/ajl" ;;
     gddy) echo "curl -fsSL https://github.com/godaddy/cli/releases/latest/download/install.sh | bash" ;;
+    session-manager-plugin) echo 'if command -v brew >/dev/null 2>&1; then brew install --cask session-manager-plugin; elif command -v dpkg >/dev/null 2>&1; then curl -fsSL https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb -o /tmp/session-manager-plugin.deb && sudo dpkg -i /tmp/session-manager-plugin.deb; elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then curl -fsSL https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm -o /tmp/session-manager-plugin.rpm && sudo yum install -y /tmp/session-manager-plugin.rpm; else echo "SessionManagerPlugin needs a platform-specific installer — see https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html" >&2; exit 1; fi' ;;
     snow) ensureTool uv && echo "uv tool install snowflake-cli" ;;
     snowsql) echo 'if command -v brew >/dev/null 2>&1; then brew install --cask snowflake-snowsql; else echo "SnowSQL needs a version-pinned platform installer — see https://docs.snowflake.com/en/user-guide/snowsql-install-config" >&2; exit 1; fi' ;;
     *) return 1 ;;
