@@ -67,7 +67,7 @@ if ! grep -qE '^[[:space:]]*cfg[[:space:]]+TISS_TREES_REPO' "$cfg_dir/config.sh"
   {
     echo ""
     echo "## -- nri defaults -------------------------------------------------------------"
-    echo 'cfg TISS_TREES_REPO "git@github.com:Newton-Research-Inc/.tiss.git"'
+    echo 'cfg TISS_TREES_REPO "https://github.com/Newton-Research-Inc/.tiss.git"'
   } >>"$cfg_dir/config.sh"
   say "set TISS_TREES_REPO default in $cfg_dir/config.sh"
 fi
