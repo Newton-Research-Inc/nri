@@ -400,7 +400,7 @@ passthrough() { # passthrough <tool> [args...] — behave as if called natively
 
   # Aliases may be multi-word: `tiss ssm ...` -> `aws ssm ...`
   local alias_cmd
-  alias_cmd="$(nriCommandAlias "$1")"
+  alias_cmd="$(tissCommandAlias "$1")"
   shift
   # shellcheck disable=SC2086  # word-splitting the alias is the point
   set -- $alias_cmd "$@"
