@@ -38,13 +38,25 @@ lines="$(wc -l <"$HOME/.bashrc" | tr -d ' ')"
 run always tissOfferRcActivation >/dev/null 2>&1
 assertEq "idempotent" "$lines" "$(wc -l <"$HOME/.bashrc" | tr -d ' ')"
 
-# pre-existing hand-written line also counts as wired.
-printf 'eval "$(tiss init)"\n' >"$HOME/.zshrc"
+# pre-existing hand-written activation (both lines) counts as fully wired.
+printf 'export PATH="$HOME/.local/bin:$PATH"\neval "$(tiss init)"\n' >"$HOME/.zshrc"
 out="$(env SHELL=/bin/zsh HOME="$HOME" TISS_AUTO_INSTALL=always TISS_LOG_LEVEL=INFO \
   TISS_LIB="$TISS_TEST_ROOT/lib" TISS_NAME=tiss TISS_HOME="$TISS_TEST_ROOT" \
   TISS_DATA="$TISS_DATA" TISS_STATE="$TISS_STATE" TISS_CONFIG="$TISS_TEST_TMP/config" \
   bash -c 'source "$TISS_LIB/init.sh"; tissOfferRcActivation' 2>&1)"
-assertEq "hand-written line respected" 1 "$(wc -l <"$HOME/.zshrc" | tr -d ' ')"
+assertEq "fully hand-written rc left untouched" 2 "$(wc -l <"$HOME/.zshrc" | tr -d ' ')"
+
+# eval-only rc is the fresh-box bug itself: a brand new shell can't resolve
+# `tiss` to run that eval line without $HOME/.local/bin on PATH first, so
+# this must self-heal by adding the missing PATH line, not treat the eval
+# line alone as "wired".
+printf 'eval "$(tiss init)"\n' >"$HOME/.zshrc"
+env SHELL=/bin/zsh HOME="$HOME" TISS_AUTO_INSTALL=always TISS_LOG_LEVEL=INFO \
+  TISS_LIB="$TISS_TEST_ROOT/lib" TISS_NAME=tiss TISS_HOME="$TISS_TEST_ROOT" \
+  TISS_DATA="$TISS_DATA" TISS_STATE="$TISS_STATE" TISS_CONFIG="$TISS_TEST_TMP/config" \
+  bash -c 'source "$TISS_LIB/init.sh"; tissOfferRcActivation' >/dev/null 2>&1
+assertMatch "eval-only rc self-heals the missing PATH line" 'local/bin' "$(cat "$HOME/.zshrc")"
+assertEq "eval line not duplicated" 1 "$(grep -c 'eval "\$(tiss init)"' "$HOME/.zshrc")"
 
 # doctor reports the wiring state with the exact fix.
 : >"$HOME/.bashrc"

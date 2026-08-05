@@ -56,24 +56,36 @@ tissMiseBootstrap() { # official installer -> ~/.local/bin, activated in-process
   tissOfferRcActivation
 }
 
-# tissOfferRcActivation — the last mile of a fresh box: get the one
-# activation line (eval "$(tiss init)") into the user's rc so every NEW
-# shell has mise/brew/shortcuts live. Idempotent (marker line), rc is
-# bkup'd first, consent follows TISS_AUTO_INSTALL (ask/always/never).
+# tissOfferRcActivation — the last mile of a fresh box: get $HOME/.local/bin
+# onto PATH and the one activation line (eval "$(tiss init)") into the
+# user's rc so every NEW shell has mise/brew/shortcuts live. The PATH line
+# MUST land first and in the same write as the eval line: without it, a
+# truly fresh shell can't even resolve `tiss` to run the eval — the PATH
+# guard baked into `tiss init`'s own output never gets a chance to run
+# (chicken-and-egg). Each line's idempotency is checked independently
+# (not a marker gate) so a box that already has one but not the other
+# self-heals instead of short-circuiting. rc is bkup'd first, consent
+# follows TISS_AUTO_INSTALL (ask/always/never).
 tissOfferRcActivation() {
-  local rc marker="# tiss activation" line
+  local rc marker="# tiss activation" line pathLine needPath=0 needLine=0
   case "${SHELL:-}" in
     */zsh) rc="$HOME/.zshrc" ;;
     *) rc="$HOME/.bashrc" ;;
   esac
   # shellcheck disable=SC2016  # the rc line is meant literal
   line='eval "$('"${TISS_NAME:-tiss}"' init)"'
-  if grep -qF "$marker" "$rc" 2>/dev/null || grep -qF "$line" "$rc" 2>/dev/null; then
+  # shellcheck disable=SC2016  # $HOME kept literal so it survives synced dotfiles
+  pathLine='export PATH="$HOME/.local/bin:$PATH"'
+  grep -qF "$line" "$rc" 2>/dev/null || needLine=1
+  grep -qF '.local/bin' "$rc" 2>/dev/null || needPath=1
+  if [ "$needLine" = 0 ] && [ "$needPath" = 0 ]; then
     return 0 # already wired
   fi
+  local wanted="$line"
+  [ "$needPath" = 1 ] && wanted="$pathLine (near the top) ; $line"
   case "${TISS_AUTO_INSTALL:-ask}" in
     never)
-      logInfo "new shells need this in $rc:  $line"
+      logInfo "new shells need this in $rc:  $wanted"
       return 0
       ;;
     always) ;;
@@ -84,22 +96,41 @@ tissOfferRcActivation() {
         IFS= read -r reply </dev/tty || reply=""
         case "$reply" in
           n* | N*)
-            logInfo "skipped — add it yourself:  echo '$line' >> $rc"
+            logInfo "skipped — add it yourself:  $wanted"
             return 0
             ;;
         esac
       else
-        logInfo "new shells need this in $rc:  $line"
+        logInfo "new shells need this in $rc:  $wanted"
         return 0
       fi
       ;;
   esac
   [ -f "$rc" ] && bkup "$rc" >/dev/null
-  {
-    echo ""
-    echo "$marker — mise/brew/shortcuts on PATH (remove any old activation lines they now duplicate)"
-    echo "$line"
-  } >>"$rc"
+  if [ "$needPath" = 1 ]; then
+    # Prepend, don't append: any line already in the file (including an
+    # orphan `eval "$(tiss init)"` left by a box bitten by this exact bug
+    # before) must come AFTER the PATH guard, not before it. Write through
+    # the path (cat > , not mv) so a symlinked rc (dotfile managers) keeps
+    # pointing at its real target instead of being replaced by a plain file.
+    local tmp
+    tmp="$(mktemp)"
+    {
+      echo "$marker — \$HOME/.local/bin on PATH (must precede any eval line below)"
+      echo "$pathLine"
+      echo ""
+      cat "$rc" 2>/dev/null
+    } >"$tmp"
+    cat "$tmp" >"$rc"
+    rm -f "$tmp"
+  fi
+  if [ "$needLine" = 1 ]; then
+    {
+      echo ""
+      echo "$marker — mise/brew/shortcuts (remove any old activation lines they now duplicate)"
+      echo "$line"
+    } >>"$rc"
+  fi
   logInfo "activation added to $rc (backed up first) — new shells are fully wired"
 }
 
