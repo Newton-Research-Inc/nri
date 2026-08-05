@@ -215,9 +215,9 @@ tissCustomInstall() { # tissCustomInstall <tool> -> install command for tools
   # outside the mise/brew registries, or fail. Keep each one a single
   # runnable command — it's shown to the user verbatim before running.
   case "$1" in
-    ajl) echo "uv tool install git+https://github.com/mattyo161/ajl" ;;
+    ajl) ensureTool uv && echo "uv tool install git+https://github.com/mattyo161/ajl" ;;
     gddy) echo "curl -fsSL https://github.com/godaddy/cli/releases/latest/download/install.sh | bash" ;;
-    snow) echo "uv tool install snowflake-cli" ;;
+    snow) ensureTool uv && echo "uv tool install snowflake-cli" ;;
     snowsql) echo 'if command -v brew >/dev/null 2>&1; then brew install --cask snowflake-snowsql; else echo "SnowSQL needs a version-pinned platform installer — see https://docs.snowflake.com/en/user-guide/snowsql-install-config" >&2; exit 1; fi' ;;
     *) return 1 ;;
   esac
