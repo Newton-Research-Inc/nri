@@ -10,11 +10,13 @@ mkdir -p "$HOME"
 export SHELL=/bin/bash
 touch "$HOME/.bashrc"
 
-run() { # run <TISS_AUTO_INSTALL> <fn> — isolated HOME, real libs
+run() { # run <TISS_AUTO_INSTALL> <fn> — isolated HOME, real libs, set -e
+  # (matches doctor.sh's own `set -euo pipefail` — a bare function call
+  # here previously hid a bug that only bit under set -e: see below)
   env HOME="$HOME" SHELL="$SHELL" TISS_AUTO_INSTALL="$1" TISS_LOG_LEVEL=INFO \
     TISS_LIB="$TISS_TEST_ROOT/lib" TISS_NAME=tiss TISS_HOME="$TISS_TEST_ROOT" \
     TISS_DATA="$TISS_DATA" TISS_STATE="$TISS_STATE" TISS_CONFIG="$TISS_TEST_TMP/config" \
-    bash -c 'source "$TISS_LIB/init.sh"; "$@"' _ "$2"
+    bash -c 'set -e; source "$TISS_LIB/init.sh"; "$@"' _ "$2"
 }
 
 # never: informs, never writes.
@@ -37,6 +39,16 @@ assertEq "rc backed up first" 1 "$(ls -A "$HOME/.bkup" 2>/dev/null | wc -l | tr 
 lines="$(wc -l <"$HOME/.bashrc" | tr -d ' ')"
 run always tissOfferRcActivation >/dev/null 2>&1
 assertEq "idempotent" "$lines" "$(wc -l <"$HOME/.bashrc" | tr -d ' ')"
+
+# rc file doesn't exist at all (not even touched) must still get created.
+# Regression guard: `cat "$rc" 2>/dev/null` as the last command of the
+# write group returns 1 when $rc is missing — 2>/dev/null hides the
+# message but not the exit code — which under set -e silently aborted
+# the whole function (and doctor.sh, which sources it) before ever
+# writing anything.
+rm -f "$HOME/.bashrc"
+run always tissOfferRcActivation >/dev/null 2>&1
+assertMatch "missing rc file gets created" 'local/bin' "$(cat "$HOME/.bashrc" 2>&1)"
 
 # pre-existing hand-written activation (both lines) counts as fully wired.
 printf 'export PATH="$HOME/.local/bin:$PATH"\neval "$(tiss init)"\n' >"$HOME/.zshrc"

@@ -119,7 +119,12 @@ tissOfferRcActivation() {
       echo "$marker — \$HOME/.local/bin on PATH (must precede any eval line below)"
       echo "$pathLine"
       echo ""
-      cat "$rc" 2>/dev/null
+      # || true: under set -e, a missing rc makes this the failing LAST
+      # command in the group — cat's exit status survives 2>/dev/null
+      # even though the error text doesn't, and would otherwise abort the
+      # whole function (and doctor.sh, which sources this) right here,
+      # silently, before ever creating the file.
+      cat "$rc" 2>/dev/null || true
     } >"$tmp"
     cat "$tmp" >"$rc"
     rm -f "$tmp"
