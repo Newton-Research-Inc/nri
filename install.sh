@@ -54,6 +54,7 @@ case ":$PATH:" in
           # shellcheck disable=SC2016  # $HOME kept literal so it survives synced dotfiles
           printf '\n# added by nri installer\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"$rc"
           say "added to $rc — restart your shell or: source $rc"
+          export PATH="${bin_dir}:${PATH}"
           ;;
         *)
           say "skipped — add this to your shell rc yourself:"
