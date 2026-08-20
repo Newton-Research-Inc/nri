@@ -27,6 +27,7 @@ source "$TISS_LIB/init.sh"
   any overlay-tree helpers and layered config.
 - Any language works — annotations parse from `#` *and* `//` comment
   styles. Working examples in the core, one per runtime:
+  
   | script | language | trick |
   | --- | --- | --- |
   | `scripts/serve.py` | python | stdlib http.server as a command |
