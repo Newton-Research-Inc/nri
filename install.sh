@@ -57,7 +57,7 @@ if [ ! -f "$cfg_dir/config.sh" ]; then
   say "created $cfg_dir/config.sh (all defaults, documented — uncomment to override)"
 fi
 
-# nri default: pile packages (tiss +name) come from the org's dedicated
+# nri default: pile packages (nri +name) come from the org's dedicated
 # distribution repo, not wherever this install happened to be cloned
 # from. Idempotent (grep guard, anchored so it doesn't match the
 # template's own commented-out doc line for the same var) so re-running

@@ -24,7 +24,7 @@ source "$TISS_LIB/init.sh"
 shortcutsFile="$TISS_CONFIG/shortcuts"
 template="$TISS_HOME/etc/shortcuts.example"
 shims="$(tissShims)"
-dispatcher="$TISS_HOME/bin/tiss"
+dispatcher="$TISS_HOME/bin/${TISS_NAME:-tiss}"
 
 seed() { # first touch: start from the commented suggested set
   if [ ! -f "$shortcutsFile" ]; then
@@ -49,7 +49,7 @@ shimStatus() { # shimStatus <name> -> ok | missing | stale | blocked
       echo ok
     else
       case "$(readlink "$entry")" in
-        */bin/tiss) echo stale ;; # a tiss shim, but not THIS dispatcher
+        */bin/${TISS_NAME:-tiss}) echo stale ;; # a tiss shim, but not THIS dispatcher
         *) echo blocked ;;        # someone else's symlink — never touched
       esac
     fi
@@ -90,7 +90,7 @@ cmdSync() {
     if [ -L "$entry" ]; then
       link="$(readlink "$entry")"
       case "$link" in
-        */bin/tiss)
+        */bin/${TISS_NAME:-tiss})
           if ! tissShortcutLookup "$base" >/dev/null; then
             rm -f "$entry"
             logInfo "pruned: $base (no longer defined)"

@@ -12,12 +12,12 @@
 # directory-routed commands.
 #
 if [ -z "${TISS_LIB:-}" ]; then
-  echo "TISS_LIB is not set — tiss scripts must run via the tiss dispatcher" >&2
+  echo "TISS_LIB is not set — ${TISS_NAME:-tiss} scripts must run via the ${TISS_NAME:-tiss} dispatcher" >&2
   exit 1
 fi
 
 TISS_HOME="${TISS_HOME:-$(cd -P "$TISS_LIB/.." && pwd)}"
-TISS_CONFIG="${TISS_CONFIG:-$HOME/.config/tiss}"
+TISS_CONFIG="${TISS_CONFIG:-$HOME/.config/${TISS_NAME:-tiss}}"
 
 . "$TISS_LIB/time.sh"
 . "$TISS_LIB/log.sh"

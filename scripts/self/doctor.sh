@@ -30,13 +30,13 @@ check() { # check <label> <hint> <command...>
   fi
 }
 
-logInfo "tiss $(cat "$TISS_HOME/version.txt" 2>/dev/null || echo dev) — home: $TISS_HOME (invoked as '$TISS_NAME')"
+logInfo "${TISS_NAME:-tiss} $(cat "$TISS_HOME/version.txt" 2>/dev/null || echo dev) — home: $TISS_HOME (invoked as '$TISS_NAME')"
 
 check "bash" "how are you even running this?" command -v bash
 check "jq (required)" "run: mise use -g jq@latest" command -v jq
-check "mise (enables lazy tool install)" "any tool-needing tiss command offers to bootstrap it, or: curl https://mise.run | sh" command -v mise
-check "age (encryption engine)" "installs on first 'tiss encrypt', or: mise use -g age@latest" command -v age
-check "encryption identity" "created on first 'tiss encrypt'" test -s "$TISS_CONFIG/age/identity.age"
+check "mise (enables lazy tool install)" "any tool-needing ${TISS_NAME:-tiss} command offers to bootstrap it, or: curl https://mise.run | sh" command -v mise
+check "age (encryption engine)" "installs on first '${TISS_NAME:-tiss} encrypt', or: mise use -g age@latest" command -v age
+check "encryption identity" "created on first '${TISS_NAME:-tiss} encrypt'" test -s "$TISS_CONFIG/age/identity.age"
 rc="$HOME/.bashrc"; case "${SHELL:-}" in */zsh) rc="$HOME/.zshrc" ;; esac
 check "rc activation (eval \"\$($TISS_NAME init)\" in ${rc##*/})" \
   "run: echo 'eval \"\$($TISS_NAME init)\"' >> $rc" \

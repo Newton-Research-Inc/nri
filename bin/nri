@@ -149,7 +149,7 @@ showHelp() { # showHelp [namespace words...] — merged across all trees
   if [ -z "$ns" ]; then
     # The lexicon leads: reserved words are the nri contract, resolved
     # only from the core — a tree can never shadow them.
-    echo "tiss lexicon (reserved — always tiss; \`$TISS_NAME -- <cmd>\` runs the real tool):"
+    echo "$TISS_NAME lexicon (reserved — always tiss; \`$TISS_NAME -- <cmd>\` runs the real tool):"
     local w lf desc
     for w in $TISS_LEXICON; do
       case "$w" in
